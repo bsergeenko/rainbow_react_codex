@@ -1,0 +1,36 @@
+import React, { useState } from 'react';
+import { api, profileValues, customerFields, instagram, facebook } from './lib.js';
+import { Link, Icon, Loading, ErrorBox, PageTitle, Form, ConfirmDialog, useApp, useResource } from './ui.jsx';
+import { Address, OrdersList } from './orders.jsx';
+
+export function Auth({ register }) {
+  const { navigate, location, refreshUser, refreshCart, refreshWishlist, notify } = useApp();
+  const fromCart = new URLSearchParams(location.search).get('von') === 'warenkorb';
+  const suffix = fromCart ? '?von=warenkorb' : '';
+  const fields = register ? [...customerFields.slice(0, 3), ['password', 'Passwort', 'password'], ['confirmPassword', 'Passwort bestätigen', 'password'], ...customerFields.slice(3).map(field => [...field.slice(0, 2), 'text', true])] : [['email', 'E-Mail-Adresse', 'email'], ['password', 'Passwort', 'password']];
+  return <div className="container auth-layout"><div className="auth-story"><p className="eyebrow">Willkommen bei Rainbow.design</p><h1>Schön, dass<br/><em>du da bist.</em></h1><p>Deine Lieblingsstücke.<br/>Dein ganz persönlicher Regentag.</p><span className="auth-sun"><Icon name="sun" size={90}/></span></div><div className="auth-panel"><PageTitle title={register ? 'Registrieren' : 'Anmelden'}>{register ? 'Ein Konto für all deine Lieblingsstücke.' : 'Melde dich in deinem Benutzerkonto an.'}</PageTitle><Form fields={fields} submitLabel={register ? 'Konto erstellen' : 'Anmelden'} extraValidate={register ? values => values.password !== values.confirmPassword ? { confirmPassword: 'Die Passwörter müssen übereinstimmen.' } : {} : undefined} onSubmit={async values => {
+    if (register) { const { confirmPassword, ...payload } = values; await api('/register', 'POST', payload); navigate(`/login${suffix}`); notify('Deine Registrierung war erfolgreich. Du kannst dich jetzt anmelden.'); }
+    else { try { await api('/login', 'POST', values); } catch (e) { if (e.status === 401) throw new Error('E-Mail-Adresse oder Passwort ist falsch.'); throw e; } const me = await refreshUser(); await refreshCart(); if (me.role === 'user') await refreshWishlist(); navigate(['admin', 'main_admin'].includes(me.role) ? '/admin/produkte' : fromCart ? '/warenkorb' : '/konto'); }
+  }}/><p className="auth-switch">{register ? 'Du hast bereits ein Konto?' : 'Noch kein Konto?'} <Link className="text-link" to={`${register ? '/login' : '/registrieren'}${suffix}`}>{register ? 'Anmelden' : 'Registrieren'}</Link></p></div></div>;
+}
+export function PasswordForm() {
+  const { notify } = useApp();
+  return <Form fields={[[ 'currentPassword', 'Aktuelles Passwort', 'password'], ['newPassword', 'Neues Passwort', 'password'], ['confirmPassword', 'Neues Passwort bestätigen', 'password']]} extraValidate={values => values.newPassword !== values.confirmPassword ? { confirmPassword: 'Die neuen Passwörter müssen übereinstimmen.' } : {}} submitLabel="Passwort ändern" onSubmit={async ({ currentPassword, newPassword }) => { await api('/me/password', 'PUT', { currentPassword, newPassword }); notify('Dein Passwort wurde geändert.'); return { reset: true }; }}/>;
+}
+export function Account() {
+  const { user, refreshUser, logout, setUser, setCart, setWishlist, navigate, notify } = useApp();
+  const [editing, setEditing] = useState(false); const [password, setPassword] = useState(false); const [deleteOpen, setDeleteOpen] = useState(false);
+  const resource = useResource(async () => { const [me, orders] = await Promise.all([refreshUser(), api('/orders')]); return { me, orders }; });
+  const [changedOrders, setChangedOrders] = useState({});
+  if (resource.loading) return <Loading/>;
+  if (resource.error) return <div className="container section"><ErrorBox>{resource.error.message}</ErrorBox><button className="button" onClick={resource.reload}>Erneut versuchen</button></div>;
+  return <div className="container section"><PageTitle eyebrow="Dein Benutzerkonto" title={`Hallo, ${user.firstName}.`}>Schön, dich wiederzusehen.</PageTitle><div className="account-layout"><aside className="account-menu"><a href="#persoenliche-daten">Persönliche Daten</a><a href="#bestellungen">Meine Bestellungen</a><Link to="/wunschliste?von=konto">Meine Wunschliste <Icon name="heart" size={17}/></Link><button onClick={() => setPassword(!password)}>Passwort ändern</button><button onClick={logout}>Abmelden</button><button className="danger-text" onClick={() => setDeleteOpen(true)}>Konto löschen</button></aside><div className="account-content"><section id="persoenliche-daten" className="panel"><div className="panel-heading"><h2>Persönliche Daten</h2><button className="text-link" onClick={() => setEditing(!editing)}>{editing ? 'Abbrechen' : 'Bearbeiten'}</button></div>{editing ? <Form fields={customerFields.map((field, index) => [field[0], field[1], field[2] || 'text', index >= 3])} initial={profileValues(user)} onSubmit={async values => { await api('/me', 'PUT', values); await refreshUser(); setEditing(false); notify('Deine Daten wurden gespeichert.'); }}/> : <Address person={user}/>}</section>{password && <section className="panel"><div className="panel-heading"><h2>Passwort ändern</h2><button className="icon-button" aria-label="Passwortformular schließen" onClick={() => setPassword(false)}><Icon name="close" size={18}/></button></div><PasswordForm/></section>}<section id="bestellungen" className="panel"><h2>Meine Bestellungen</h2><OrdersList orders={resource.data.orders.map(order => changedOrders[order.id] || order)} onChange={order => setChangedOrders({ ...changedOrders, [order.id]: order })}/></section></div></div>{deleteOpen && <ConfirmDialog title="Konto wirklich löschen?" confirmLabel="Konto löschen" onClose={() => setDeleteOpen(false)} onConfirm={async () => { await api('/me', 'DELETE'); setUser(null); setCart([]); setWishlist([]); navigate('/'); }}>Dein Benutzerkonto wird dauerhaft gelöscht. Bereits aufgegebene Bestellungen bleiben erhalten.</ConfirmDialog>}</div>;
+}
+export function Contact() {
+  const { user, notify } = useApp();
+  const resource = useResource(() => user ? api('/me') : Promise.resolve(null));
+  if (resource.loading) return <Loading/>;
+  if (resource.error) return <div className="container section"><ErrorBox>{resource.error.message}</ErrorBox></div>;
+  const me = resource.data;
+  return <div className="container section"><div className="contact-layout"><div><p className="eyebrow">Lass uns sprechen</p><h1>Ein Hallo macht<br/>den Tag <em>bunter.</em></h1><p className="contact-intro">Du hast eine Frage zu deinem Regenmantel<br/>oder eine besondere Idee? Schreib uns.</p><div className="contact-social"><p className="eyebrow">Noch mehr Rainbow</p><a className="text-link" href={instagram} target="_blank" rel="noreferrer">Instagram ↗</a><a className="text-link" href={facebook} target="_blank" rel="noreferrer">Facebook ↗</a></div></div><div className="panel"><h2>Deine Nachricht</h2><Form fields={[[ 'name', 'Name'], ['email', 'E-Mail-Adresse', 'email'], ['subject', 'Betreff'], ['message', 'Nachricht', 'textarea']]} initial={{ name: me ? `${me.firstName} ${me.lastName}` : '', email: me?.email || '' }} submitLabel="Nachricht senden" onSubmit={async values => { await api('/contact', 'POST', values); notify('Vielen Dank für deine Nachricht.'); return { reset: true }; }}/></div></div></div>;
+}
